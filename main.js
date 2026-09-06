@@ -6,7 +6,10 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 const CAR_URL = 'https://raw.githubusercontent.com/EthiBet/sideswipe/main/origincar.glb';
 
 // Arena dimensions (units are arbitrary but consistent across everything below)
-const ARENA_LENGTH = 24;   // long axis (X) - side to side
+const ARENA_LENGTH = 50;   // long axis (X) - side to side. Widened so the ball can
+                            // actually leave the camera's view (needed for the
+                            // off-screen arrow to ever trigger) - matches the
+                            // intended long-arena Sideswipe layout.
 const ARENA_HEIGHT = 10;   // vertical (Y)
 const ARENA_DEPTH = 6;     // short axis (Z) - "2D" gameplay depth, kept shallow
 const GOAL_WIDTH = 4;      // how wide the goal opening is (vertically, since goals are elevated)
@@ -56,6 +59,9 @@ const ballState = {
 const BALL_GRAVITY = 14;       // a bit lighter than the car's gravity, floatier feel
 const BALL_RESTITUTION = 0.45; // bounce energy retained (0 = no bounce, 1 = perfect bounce) - reduced, was too bouncy
 const MIN_HIT_PUSH = 1.2;      // small minimum push so the ball doesn't stick inside a stationary car
+const SHOT_MIN_IMPACT_SPEED = 3.0; // minimum impact push strength to count as a real "shot"
+const SHOT_COOLDOWN = 0.4;         // seconds between countable shots, prevents double-counting one hit
+let shotCooldownRemaining = 0;
 
 const WALL_X_LEFT = -ARENA_LENGTH / 2;
 const WALL_X_RIGHT = ARENA_LENGTH / 2;
@@ -194,6 +200,8 @@ function updateMatchTimer(dt) {
 function updateBallPhysics(dt) {
   if (matchState.gameOver || countdownActive) return;
 
+  if (shotCooldownRemaining > 0) shotCooldownRemaining -= dt;
+
   ballState.vy -= BALL_GRAVITY * dt;
   ballState.x += ballState.vx * dt;
   ballState.y += ballState.vy * dt;
@@ -256,23 +264,33 @@ function updateBallPhysics(dt) {
       const ny = dy / dist;
       const overlap = BALL_RADIUS - dist;
 
-      // Push the ball out of the car
+      // Always correct the overlap so the ball never sinks into the car
       ballState.x += nx * overlap;
       ballState.y += ny * overlap;
 
-      // Transfer the car's actual velocity into the ball. The "pop" added on
-      // top scales with how fast the car is moving - a stationary or slow
-      // car should barely nudge the ball, not launch it from nothing.
-      const carSpeed = Math.sqrt(carState.vx * carState.vx + Math.max(carState.vy, 0) ** 2);
-      const pushStrength = MIN_HIT_PUSH + carSpeed * 0.5;
-      ballState.vx = carState.vx + nx * pushStrength;
-      ballState.vy = Math.max(carState.vy, 0) + ny * pushStrength;
+      // Only inject new velocity if the ball is actually approaching the car
+      // along the contact normal - if it's resting on top or already moving
+      // away, leave its velocity alone. Without this check, gravity pulling
+      // a resting ball back down every frame kept re-triggering a "hit" and
+      // launching it, which both looked wrong and double-counted shots.
+      const relVelX = ballState.vx - carState.vx;
+      const relVelY = ballState.vy - Math.max(carState.vy, 0);
+      const closingSpeed = -(relVelX * nx + relVelY * ny);
 
-      // Count a "shot" only on the moment contact begins, not every frame
-      // the ball happens to still be touching the car
-      if (!wasTouchingBall) {
-        playerStats.shots += 1;
-        updateStatsUI();
+      if (closingSpeed > 0) {
+        const carSpeed = Math.sqrt(carState.vx * carState.vx + Math.max(carState.vy, 0) ** 2);
+        const pushStrength = MIN_HIT_PUSH + carSpeed * 0.5;
+        ballState.vx = carState.vx + nx * pushStrength;
+        ballState.vy = Math.max(carState.vy, 0) + ny * pushStrength;
+
+        // Count a "shot" only on a genuine new impact - must be a fresh
+        // touch, hit with enough force to matter, and outside the cooldown
+        // window so one hit can't register multiple times.
+        if (!wasTouchingBall && shotCooldownRemaining <= 0 && pushStrength >= SHOT_MIN_IMPACT_SPEED) {
+          playerStats.shots += 1;
+          updateStatsUI();
+          shotCooldownRemaining = SHOT_COOLDOWN;
+        }
       }
     }
   }
