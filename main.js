@@ -43,6 +43,8 @@ const carState = {
 let carHalfHeight = 0.3; // updated once the real model size is known
 let carHalfLength = 1.0; // updated once the real model size is known
 let lastMoveDir = 1; // tracks actual travel direction (not the cosmetic facing flip) for boost
+const CAR_START_X = -4;
+let countdownActive = false; // true during the 3-2-1 kickoff pause, freezes everything
 
 // ---------- BALL PHYSICS STATE ----------
 const ballState = {
@@ -87,6 +89,54 @@ function resetBallToCenter() {
   ballState.vy = 0;
 }
 
+function resetCarToStart() {
+  if (!car) return;
+  carState.x = CAR_START_X;
+  carState.y = 0;
+  carState.vx = 0;
+  carState.vy = 0;
+  carState.grounded = true;
+  carState.facingFlipped = false;
+  carState.isRolling = false;
+
+  // Apply directly to the visible object too, since physics updates are
+  // frozen during the countdown and won't otherwise move it back on-screen
+  car.position.x = carState.x;
+  car.position.y = carHalfHeight + carState.y;
+  car.rotation.y = 0;
+  car.rotation.z = 0;
+}
+
+function startKickoffCountdown() {
+  countdownActive = true;
+  resetCarToStart();
+  resetBallToCenter();
+  document.getElementById('joystick-base').style.display = 'none';
+  document.getElementById('button-cluster').style.display = 'none';
+
+  matchBannerEl.style.color = 'white';
+  matchBannerEl.style.display = 'block';
+
+  let count = 3;
+  matchBannerEl.textContent = count;
+
+  const interval = setInterval(() => {
+    count -= 1;
+    if (count > 0) {
+      matchBannerEl.textContent = count;
+    } else {
+      matchBannerEl.textContent = 'GO!';
+      clearInterval(interval);
+      setTimeout(() => {
+        matchBannerEl.style.display = 'none';
+        document.getElementById('joystick-base').style.display = '';
+        document.getElementById('button-cluster').style.display = '';
+        countdownActive = false;
+      }, 500);
+    }
+  }, 1000);
+}
+
 function awardGoal(scoringTeam) {
   if (scoringTeam === 'blue') {
     matchState.scoreBlue += 1;
@@ -100,7 +150,7 @@ function awardGoal(scoringTeam) {
   if (matchState.overtime) {
     endMatch(scoringTeam);
   } else {
-    resetBallToCenter();
+    startKickoffCountdown();
   }
 }
 
@@ -119,7 +169,7 @@ function endMatch(winner) {
 }
 
 function updateMatchTimer(dt) {
-  if (matchState.gameOver || matchState.overtime) return;
+  if (matchState.gameOver || matchState.overtime || countdownActive) return;
   matchState.timeRemaining -= dt;
   if (matchState.timeRemaining <= 0) {
     matchState.timeRemaining = 0;
@@ -127,6 +177,7 @@ function updateMatchTimer(dt) {
       matchState.overtime = true;
       matchTimerEl.textContent = 'OVERTIME';
       debugLog('Match tied - entering sudden death overtime');
+      startKickoffCountdown();
     } else {
       endMatch(matchState.scoreBlue > matchState.scoreOrange ? 'blue' : 'orange');
     }
@@ -137,7 +188,7 @@ function updateMatchTimer(dt) {
 
 // ---------- BALL PHYSICS + COLLISIONS ----------
 function updateBallPhysics(dt) {
-  if (matchState.gameOver) return;
+  if (matchState.gameOver || countdownActive) return;
 
   ballState.vy -= BALL_GRAVITY * dt;
   ballState.x += ballState.vx * dt;
@@ -526,7 +577,7 @@ function updateBoostMeterUI() {
 
 // ---------- PHYSICS UPDATE ----------
 function updateCarPhysics(dt) {
-  if (!car || matchState.gameOver) return;
+  if (!car || matchState.gameOver || countdownActive) return;
 
   const isBoosting = boostHeld && carState.boost > 0;
 
