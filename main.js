@@ -22,7 +22,8 @@ const AIR_STEER_SPEED = 2.5;   // how much horizontal drift the joystick gives w
 const GRAVITY = 18;            // downward acceleration, units/sec^2
 const JUMP_VELOCITY = 8;       // upward speed applied on jump
 const FAST_FALL_MULTIPLIER = 2.5; // extra downward pull when pulling joystick down/back in air
-const BOOST_ACCEL = 10;        // extra acceleration/sec while boosting
+const BOOST_ACCEL = 10;        // extra acceleration/sec while boosting (used in air)
+const BOOST_GROUND_SPEED_BONUS = 5; // flat extra speed added on top of ground movement while boosting
 const BOOST_DRAIN_PER_SEC = 40;   // meter points drained per second while held
 const BOOST_RECHARGE_PER_SEC = 15; // meter points regained per second while not held
 const ARENA_HALF_LENGTH = ARENA_LENGTH / 2 - 1.5; // leaves room so car doesn't clip through goal walls
@@ -351,9 +352,16 @@ function updateBoostMeterUI() {
 function updateCarPhysics(dt) {
   if (!car) return;
 
+  const isBoosting = boostHeld && carState.boost > 0;
+  const facingDir = carState.facingFlipped ? -1 : 1;
+
   if (carState.grounded) {
-    // Ground movement: direct horizontal control from the joystick
-    carState.vx = joystickX * MOVE_SPEED;
+    // Ground movement: direct horizontal control from the joystick, plus a
+    // real flat speed bonus while boosting (added here, not as a tiny
+    // per-frame acceleration, since ground velocity is fully recomputed
+    // every frame from the joystick and would otherwise erase it)
+    const boostBonus = isBoosting ? facingDir * BOOST_GROUND_SPEED_BONUS : 0;
+    carState.vx = joystickX * MOVE_SPEED + boostBonus;
   } else {
     // Airborne: joystick gives light steering drift, not full control
     carState.vx += joystickX * AIR_STEER_SPEED * dt;
@@ -363,12 +371,15 @@ function updateCarPhysics(dt) {
     if (joystickY < -0.5) {
       carState.vy -= GRAVITY * FAST_FALL_MULTIPLIER * dt;
     }
+
+    // In the air, boost still works as a genuine acceleration since
+    // air velocity persists frame-to-frame instead of being reset
+    if (isBoosting) {
+      carState.vx += facingDir * BOOST_ACCEL * dt;
+    }
   }
 
-  // Boost: applies in the direction the car is currently facing
-  if (boostHeld && carState.boost > 0) {
-    const facingDir = carState.facingFlipped ? -1 : 1;
-    carState.vx += facingDir * BOOST_ACCEL * dt;
+  if (isBoosting) {
     carState.boost = Math.max(0, carState.boost - BOOST_DRAIN_PER_SEC * dt);
   } else if (carState.boost < 100) {
     carState.boost = Math.min(100, carState.boost + BOOST_RECHARGE_PER_SEC * dt);
@@ -401,14 +412,20 @@ function updateCarPhysics(dt) {
   // Facing flip (turnaround button) - rotates the model 180 degrees around Y
   // so it visually still looks like it's driving forward while reversing
   const baseFacing = carState.facingFlipped ? Math.PI : 0;
+  car.rotation.y = baseFacing;
 
   if (carState.isRolling) {
     // Continuous air roll - spin around the car's forward (Z) axis
     car.rotation.z += dt * 6;
+  } else if (!carState.grounded) {
+    // Airborne steering tilt: joystick angles the car's nose up/down,
+    // giving visual "steering" control while in the air
+    const targetTilt = joystickY * 0.6;
+    car.rotation.z = THREE.MathUtils.lerp(car.rotation.z, targetTilt, dt * 8);
   } else {
-    car.rotation.z = 0;
+    // Level out smoothly once back on the ground
+    car.rotation.z = THREE.MathUtils.lerp(car.rotation.z, 0, dt * 8);
   }
-  car.rotation.y = baseFacing;
 }
 
 
