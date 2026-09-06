@@ -14,6 +14,33 @@ const GOAL_GAP_FROM_FLOOR = 2; // gap between floor and bottom of goal opening, 
 
 const BALL_RADIUS = 1.0;
 
+// ---------- MOVEMENT / PHYSICS CONSTANTS ----------
+// This is a 2D side-view game: X = left/right (ground movement), Y = up/down
+// (jump + gravity). Z stays fixed - it's just the "3D depth" of the car model.
+const MOVE_SPEED = 6;          // ground horizontal speed, units/sec at full joystick deflection
+const AIR_STEER_SPEED = 2.5;   // how much horizontal drift the joystick gives while airborne
+const GRAVITY = 18;            // downward acceleration, units/sec^2
+const JUMP_VELOCITY = 8;       // upward speed applied on jump
+const FAST_FALL_MULTIPLIER = 2.5; // extra downward pull when pulling joystick down/back in air
+const BOOST_ACCEL = 10;        // extra acceleration/sec while boosting
+const BOOST_DRAIN_PER_SEC = 40;   // meter points drained per second while held
+const BOOST_RECHARGE_PER_SEC = 15; // meter points regained per second while not held
+const ARENA_HALF_LENGTH = ARENA_LENGTH / 2 - 1.5; // leaves room so car doesn't clip through goal walls
+
+// Car physics state - separate from the Three.js object's own transform,
+// since we compute position/velocity ourselves each frame.
+const carState = {
+  x: -4,
+  y: 0,           // 0 = resting on the floor; car's own half-height is added visually
+  vx: 0,
+  vy: 0,
+  grounded: true,
+  facingFlipped: false, // toggled by the rotate/turnaround button
+  boost: 100,
+  isRolling: false,     // continuous air roll toggled by double-tapping the joystick
+};
+let carHalfHeight = 0.3; // updated once the real model size is known
+
 // ---------- DEBUG PANEL (no DevTools available, so we print to the page) ----------
 const debugPanel = document.getElementById('debug-panel');
 const debugLines = [];
@@ -187,6 +214,7 @@ loader.load(
     );
 
     car.position.set(-4, scaledSize.y / 2, 0);
+    carHalfHeight = scaledSize.y / 2;
 
     // Apply team color (orange) - single-mesh models recolor entirely for now
     car.traverse((child) => {
@@ -210,9 +238,183 @@ loader.load(
   }
 );
 
+// ---------- INPUT: JOYSTICK ----------
+const joystickBase = document.getElementById('joystick-base');
+const joystickKnob = document.getElementById('joystick-knob');
+const JOYSTICK_RADIUS = 65; // matches half of #joystick-base width in CSS
+
+let joystickActive = false;
+let joystickX = 0; // -1 (left) to 1 (right)
+let joystickY = 0; // -1 (pulled down/back) to 1 (pushed up)
+let joystickPointerId = null;
+
+let lastJoystickTapTime = 0;
+const DOUBLE_TAP_WINDOW_MS = 350;
+
+function getJoystickBaseCenter() {
+  const rect = joystickBase.getBoundingClientRect();
+  return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+}
+
+function updateJoystickFromPointer(clientX, clientY) {
+  const { cx, cy } = getJoystickBaseCenter();
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > JOYSTICK_RADIUS) {
+    dx = (dx / dist) * JOYSTICK_RADIUS;
+    dy = (dy / dist) * JOYSTICK_RADIUS;
+  }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystickX = dx / JOYSTICK_RADIUS;
+  joystickY = -dy / JOYSTICK_RADIUS; // invert so "up" on screen = positive
+}
+
+function resetJoystick() {
+  joystickKnob.style.transform = 'translate(0px, 0px)';
+  joystickX = 0;
+  joystickY = 0;
+}
+
+joystickBase.addEventListener('pointerdown', (e) => {
+  joystickActive = true;
+  joystickPointerId = e.pointerId;
+  joystickBase.setPointerCapture(e.pointerId);
+  updateJoystickFromPointer(e.clientX, e.clientY);
+
+  // Double-tap detection - toggles continuous air roll while airborne
+  const now = performance.now();
+  if (now - lastJoystickTapTime < DOUBLE_TAP_WINDOW_MS) {
+    if (!carState.grounded) {
+      carState.isRolling = !carState.isRolling;
+      debugLog(`Air roll ${carState.isRolling ? 'started' : 'stopped'}`);
+    }
+  }
+  lastJoystickTapTime = now;
+});
+
+joystickBase.addEventListener('pointermove', (e) => {
+  if (joystickActive && e.pointerId === joystickPointerId) {
+    updateJoystickFromPointer(e.clientX, e.clientY);
+  }
+});
+
+function endJoystick(e) {
+  if (e.pointerId === joystickPointerId) {
+    joystickActive = false;
+    joystickPointerId = null;
+    resetJoystick();
+  }
+}
+joystickBase.addEventListener('pointerup', endJoystick);
+joystickBase.addEventListener('pointercancel', endJoystick);
+
+// ---------- INPUT: BUTTONS ----------
+const jumpBtn = document.getElementById('jump-btn');
+const boostBtn = document.getElementById('boost-btn');
+const rotateBtn = document.getElementById('rotate-btn');
+const boostFill = document.getElementById('boost-fill');
+
+let boostHeld = false;
+
+jumpBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (carState.grounded) {
+    carState.vy = JUMP_VELOCITY;
+    carState.grounded = false;
+  }
+});
+
+boostBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  boostHeld = true;
+});
+boostBtn.addEventListener('pointerup', () => { boostHeld = false; });
+boostBtn.addEventListener('pointercancel', () => { boostHeld = false; });
+boostBtn.addEventListener('pointerleave', () => { boostHeld = false; });
+
+rotateBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  carState.facingFlipped = !carState.facingFlipped;
+});
+
+function updateBoostMeterUI() {
+  const degrees = (carState.boost / 100) * 360;
+  boostFill.style.background = `conic-gradient(#fbbf24 ${degrees}deg, transparent ${degrees}deg)`;
+}
+
+// ---------- PHYSICS UPDATE ----------
+function updateCarPhysics(dt) {
+  if (!car) return;
+
+  if (carState.grounded) {
+    // Ground movement: direct horizontal control from the joystick
+    carState.vx = joystickX * MOVE_SPEED;
+  } else {
+    // Airborne: joystick gives light steering drift, not full control
+    carState.vx += joystickX * AIR_STEER_SPEED * dt;
+    carState.vx *= 0.98; // slight air drag so drift doesn't run away
+
+    // Pulling the joystick down/back triggers a fast-fall
+    if (joystickY < -0.5) {
+      carState.vy -= GRAVITY * FAST_FALL_MULTIPLIER * dt;
+    }
+  }
+
+  // Boost: applies in the direction the car is currently facing
+  if (boostHeld && carState.boost > 0) {
+    const facingDir = carState.facingFlipped ? -1 : 1;
+    carState.vx += facingDir * BOOST_ACCEL * dt;
+    carState.boost = Math.max(0, carState.boost - BOOST_DRAIN_PER_SEC * dt);
+  } else if (carState.boost < 100) {
+    carState.boost = Math.min(100, carState.boost + BOOST_RECHARGE_PER_SEC * dt);
+  }
+  updateBoostMeterUI();
+
+  // Gravity always applies except when resting on the ground
+  if (!carState.grounded) {
+    carState.vy -= GRAVITY * dt;
+  }
+
+  // Integrate position
+  carState.x += carState.vx * dt;
+  carState.y += carState.vy * dt;
+
+  // Clamp to arena bounds so the car can't drive through the goal walls
+  carState.x = Math.max(-ARENA_HALF_LENGTH, Math.min(ARENA_HALF_LENGTH, carState.x));
+
+  // Ground collision
+  if (carState.y <= 0) {
+    carState.y = 0;
+    carState.vy = 0;
+    carState.grounded = true;
+  }
+
+  // Apply to the actual 3D object
+  car.position.x = carState.x;
+  car.position.y = carHalfHeight + carState.y;
+
+  // Facing flip (turnaround button) - rotates the model 180 degrees around Y
+  // so it visually still looks like it's driving forward while reversing
+  const baseFacing = carState.facingFlipped ? Math.PI : 0;
+
+  if (carState.isRolling) {
+    // Continuous air roll - spin around the car's forward (Z) axis
+    car.rotation.z += dt * 6;
+  } else {
+    car.rotation.z = 0;
+  }
+  car.rotation.y = baseFacing;
+}
+
+
 // ---------- RENDER LOOP ----------
+const clock = new THREE.Clock();
+
 function animate() {
   requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1); // clamp dt to avoid big jumps on tab-switch lag
+  updateCarPhysics(dt);
   renderer.render(scene, camera);
 }
 animate();
