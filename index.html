@@ -38,6 +38,25 @@
   <canvas id="scene-canvas"></canvas>
   <div id="debug-panel">Loading...</div>
 
-  <script type="module" src="./main.js"></script>
+  <script>
+    // Catch anything that goes wrong anywhere on the page, since DevTools
+    // isn't available to read errors from the console.
+    const panel = document.getElementById('debug-panel');
+    window.addEventListener('error', (e) => {
+      panel.textContent = 'PAGE ERROR: ' + (e.message || e) +
+        (e.filename ? '\nFile: ' + e.filename + ':' + e.lineno : '');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      panel.textContent = 'PROMISE ERROR: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+    });
+  </script>
+  <script type="module">
+    // Dynamic import wrapped in a catch - a top-level `import` statement
+    // fails silently with no error surfaced if the module (or a CDN it
+    // depends on) can't load, so we do it this way instead.
+    import('./main.js').catch((err) => {
+      panel.textContent = 'FAILED TO LOAD main.js: ' + (err.message || err);
+    });
+  </script>
 </body>
 </html>
