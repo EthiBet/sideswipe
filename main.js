@@ -140,6 +140,10 @@ function startKickoffCountdown() {
 function awardGoal(scoringTeam) {
   if (scoringTeam === 'blue') {
     matchState.scoreBlue += 1;
+    // Solo test car is treated as blue for now - real per-player attribution
+    // comes with Stage 5 once there are multiple actual players/teams
+    playerStats.goals += 1;
+    updateStatsUI();
   } else {
     matchState.scoreOrange += 1;
   }
@@ -234,6 +238,7 @@ function updateBallPhysics(dt) {
   }
 
   // Car-ball collision - treat the car as a simple box, ball as a circle
+  let touchingBallThisFrame = false;
   if (car) {
     const closestX = Math.max(carState.x - carHalfLength, Math.min(ballState.x, carState.x + carHalfLength));
     const carTopY = carHalfHeight + carState.y + carHalfHeight; // top of the car's box
@@ -245,6 +250,7 @@ function updateBallPhysics(dt) {
     const distSq = dx * dx + dy * dy;
 
     if (distSq < BALL_RADIUS * BALL_RADIUS) {
+      touchingBallThisFrame = true;
       const dist = Math.sqrt(distSq) || 0.001;
       const nx = dx / dist;
       const ny = dy / dist;
@@ -261,8 +267,16 @@ function updateBallPhysics(dt) {
       const pushStrength = MIN_HIT_PUSH + carSpeed * 0.5;
       ballState.vx = carState.vx + nx * pushStrength;
       ballState.vy = Math.max(carState.vy, 0) + ny * pushStrength;
+
+      // Count a "shot" only on the moment contact begins, not every frame
+      // the ball happens to still be touching the car
+      if (!wasTouchingBall) {
+        playerStats.shots += 1;
+        updateStatsUI();
+      }
     }
   }
+  wasTouchingBall = touchingBallThisFrame;
 
   ball.position.set(ballState.x, ballState.y, 0);
 }
@@ -662,7 +676,92 @@ function updateCarPhysics(dt) {
 }
 
 
-// ---------- RENDER LOOP ----------
+// ---------- USERNAME LABEL (a sprite that floats above the car) ----------
+// No login screen exists yet in this build, so this uses a placeholder name -
+// swap this for the real entered username once the opening screen is built.
+const PLACEHOLDER_USERNAME = 'You';
+
+function makeUsernameSprite(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 36px sans-serif';
+  ctx.fillStyle = 'white';
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 5;
+  ctx.textAlign = 'center';
+  ctx.strokeText(text, 128, 44);
+  ctx.fillText(text, 128, 44);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.6, 0.4, 1);
+  return sprite;
+}
+
+const usernameSprite = makeUsernameSprite(PLACEHOLDER_USERNAME);
+scene.add(usernameSprite);
+
+// ---------- STATS TRACKING ----------
+const playerStats = { goals: 0, assists: 0, shots: 0, saves: 0 };
+const statGoalsEl = document.getElementById('stat-goals');
+const statAssistsEl = document.getElementById('stat-assists');
+const statShotsEl = document.getElementById('stat-shots');
+const statSavesEl = document.getElementById('stat-saves');
+
+function updateStatsUI() {
+  statGoalsEl.textContent = playerStats.goals;
+  statAssistsEl.textContent = playerStats.assists;
+  statShotsEl.textContent = playerStats.shots;
+  statSavesEl.textContent = playerStats.saves;
+}
+
+// Tracks whether the car was touching the ball last frame, so a "shot" only
+// counts once per new touch rather than every single frame of contact.
+let wasTouchingBall = false;
+
+// ---------- OFF-SCREEN BALL DIRECTION ARROW ----------
+const ballArrowEl = document.getElementById('ball-arrow');
+
+function updateBallArrow() {
+  const screenPos = new THREE.Vector3(ballState.x, ballState.y, 0).project(camera);
+
+  const isOnScreen = screenPos.x >= -1 && screenPos.x <= 1 && screenPos.y >= -1 && screenPos.y <= 1 && screenPos.z < 1;
+
+  if (isOnScreen) {
+    ballArrowEl.style.display = 'none';
+    return;
+  }
+
+  ballArrowEl.style.display = 'block';
+
+  // Clamp the arrow's position to the screen edges, with some margin
+  const margin = 40;
+  const halfW = window.innerWidth / 2;
+  const halfH = window.innerHeight / 2;
+  let px = halfW + screenPos.x * halfW;
+  let py = halfH - screenPos.y * halfH;
+
+  // If the ball is behind the camera, the projected point flips - correct for it
+  if (screenPos.z > 1) {
+    px = window.innerWidth - px;
+    py = window.innerHeight - py;
+  }
+
+  const clampedX = Math.max(margin, Math.min(window.innerWidth - margin, px));
+  const clampedY = Math.max(margin, Math.min(window.innerHeight - margin, py));
+
+  ballArrowEl.style.left = `${clampedX - 14}px`;
+  ballArrowEl.style.top = `${clampedY - 12}px`;
+
+  // Point the arrow toward the ball's actual direction from screen center
+  const angle = Math.atan2(clampedY - halfH, clampedX - halfW) * (180 / Math.PI) + 90;
+  ballArrowEl.style.transform = `rotate(${angle}deg)`;
+}
+
+
 const clock = new THREE.Clock();
 
 function animate() {
@@ -671,6 +770,12 @@ function animate() {
   updateCarPhysics(dt);
   updateBallPhysics(dt);
   updateMatchTimer(dt);
+
+  if (car) {
+    usernameSprite.position.set(car.position.x, car.position.y + carHalfHeight + 0.6, 0);
+  }
+  updateBallArrow();
+
   renderer.render(scene, camera);
 }
 animate();
