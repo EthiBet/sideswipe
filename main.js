@@ -41,7 +41,170 @@ const carState = {
   isRolling: false,     // continuous air roll toggled by double-tapping the joystick
 };
 let carHalfHeight = 0.3; // updated once the real model size is known
+let carHalfLength = 1.0; // updated once the real model size is known
 let lastMoveDir = 1; // tracks actual travel direction (not the cosmetic facing flip) for boost
+
+// ---------- BALL PHYSICS STATE ----------
+const ballState = {
+  x: 0,
+  y: BALL_RADIUS + 3, // starts a bit above center so it visibly drops in
+  vx: 0,
+  vy: 0,
+};
+const BALL_GRAVITY = 14;       // a bit lighter than the car's gravity, floatier feel
+const BALL_RESTITUTION = 0.72; // bounce energy retained (0 = no bounce, 1 = perfect bounce)
+const HIT_IMPULSE = 9;         // extra "pop" applied when the car hits the ball
+
+const WALL_X_LEFT = -ARENA_LENGTH / 2;
+const WALL_X_RIGHT = ARENA_LENGTH / 2;
+const GOAL_BOTTOM = GOAL_GAP_FROM_FLOOR;
+const GOAL_TOP = GOAL_GAP_FROM_FLOOR + GOAL_WIDTH;
+
+// ---------- MATCH / SCORE STATE ----------
+const matchState = {
+  scoreBlue: 0,
+  scoreOrange: 0,
+  timeRemaining: 120, // 2 minutes, per spec
+  overtime: false,
+  gameOver: false,
+};
+
+const scoreBlueEl = document.getElementById('score-blue');
+const scoreOrangeEl = document.getElementById('score-orange');
+const matchTimerEl = document.getElementById('match-timer');
+const matchBannerEl = document.getElementById('match-banner');
+
+function formatTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function resetBallToCenter() {
+  ballState.x = 0;
+  ballState.y = BALL_RADIUS + 3;
+  ballState.vx = 0;
+  ballState.vy = 0;
+}
+
+function awardGoal(scoringTeam) {
+  if (scoringTeam === 'blue') {
+    matchState.scoreBlue += 1;
+  } else {
+    matchState.scoreOrange += 1;
+  }
+  scoreBlueEl.textContent = matchState.scoreBlue;
+  scoreOrangeEl.textContent = matchState.scoreOrange;
+  debugLog(`GOAL for ${scoringTeam}! ${matchState.scoreBlue} - ${matchState.scoreOrange}`);
+
+  if (matchState.overtime) {
+    endMatch(scoringTeam);
+  } else {
+    resetBallToCenter();
+  }
+}
+
+function endMatch(winner) {
+  matchState.gameOver = true;
+  matchBannerEl.style.display = 'block';
+  if (winner === 'tie') {
+    matchBannerEl.textContent = "IT'S A TIE";
+  } else {
+    matchBannerEl.textContent = `${winner.toUpperCase()} WINS!`;
+    matchBannerEl.style.color = winner === 'blue' ? '#3b82f6' : '#f97316';
+  }
+}
+
+function updateMatchTimer(dt) {
+  if (matchState.gameOver || matchState.overtime) return;
+  matchState.timeRemaining -= dt;
+  if (matchState.timeRemaining <= 0) {
+    matchState.timeRemaining = 0;
+    if (matchState.scoreBlue === matchState.scoreOrange) {
+      matchState.overtime = true;
+      matchTimerEl.textContent = 'OVERTIME';
+      debugLog('Match tied - entering sudden death overtime');
+    } else {
+      endMatch(matchState.scoreBlue > matchState.scoreOrange ? 'blue' : 'orange');
+    }
+  } else {
+    matchTimerEl.textContent = formatTime(matchState.timeRemaining);
+  }
+}
+
+// ---------- BALL PHYSICS + COLLISIONS ----------
+function updateBallPhysics(dt) {
+  if (matchState.gameOver) return;
+
+  ballState.vy -= BALL_GRAVITY * dt;
+  ballState.x += ballState.vx * dt;
+  ballState.y += ballState.vy * dt;
+
+  // Floor bounce
+  if (ballState.y - BALL_RADIUS <= 0) {
+    ballState.y = BALL_RADIUS;
+    if (ballState.vy < 0) ballState.vy = -ballState.vy * BALL_RESTITUTION;
+  }
+  // Ceiling bounce
+  if (ballState.y + BALL_RADIUS >= ARENA_HEIGHT) {
+    ballState.y = ARENA_HEIGHT - BALL_RADIUS;
+    if (ballState.vy > 0) ballState.vy = -ballState.vy * BALL_RESTITUTION;
+  }
+
+  // Left end wall / goal
+  if (ballState.x - BALL_RADIUS <= WALL_X_LEFT) {
+    const inGoalOpening = ballState.y > GOAL_BOTTOM && ballState.y < GOAL_TOP;
+    if (inGoalOpening && ballState.x - BALL_RADIUS <= WALL_X_LEFT - 0.3) {
+      // Ball has passed fully through the opening - orange scores on blue's goal
+      awardGoal('orange');
+    } else {
+      ballState.x = WALL_X_LEFT + BALL_RADIUS;
+      ballState.vx = -ballState.vx * BALL_RESTITUTION;
+    }
+  }
+
+  // Right end wall / goal
+  if (ballState.x + BALL_RADIUS >= WALL_X_RIGHT) {
+    const inGoalOpening = ballState.y > GOAL_BOTTOM && ballState.y < GOAL_TOP;
+    if (inGoalOpening && ballState.x + BALL_RADIUS >= WALL_X_RIGHT + 0.3) {
+      // Ball has passed fully through the opening - blue scores on orange's goal
+      awardGoal('blue');
+    } else {
+      ballState.x = WALL_X_RIGHT - BALL_RADIUS;
+      ballState.vx = -ballState.vx * BALL_RESTITUTION;
+    }
+  }
+
+  // Car-ball collision - treat the car as a simple box, ball as a circle
+  if (car) {
+    const closestX = Math.max(carState.x - carHalfLength, Math.min(ballState.x, carState.x + carHalfLength));
+    const carTopY = carHalfHeight + carState.y + carHalfHeight; // top of the car's box
+    const carBottomY = carState.y; // bottom of the car's box (resting/current height)
+    const closestY = Math.max(carBottomY, Math.min(ballState.y, carTopY));
+
+    const dx = ballState.x - closestX;
+    const dy = ballState.y - closestY;
+    const distSq = dx * dx + dy * dy;
+
+    if (distSq < BALL_RADIUS * BALL_RADIUS) {
+      const dist = Math.sqrt(distSq) || 0.001;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const overlap = BALL_RADIUS - dist;
+
+      // Push the ball out of the car
+      ballState.x += nx * overlap;
+      ballState.y += ny * overlap;
+
+      // Transfer car velocity into the ball, plus a pop for a satisfying hit
+      ballState.vx = carState.vx + nx * HIT_IMPULSE;
+      ballState.vy = Math.max(carState.vy, 0) + ny * HIT_IMPULSE;
+    }
+  }
+
+  ball.position.set(ballState.x, ballState.y, 0);
+}
+
 
 // ---------- DEBUG PANEL (no DevTools available, so we print to the page) ----------
 const debugPanel = document.getElementById('debug-panel');
@@ -217,6 +380,7 @@ loader.load(
 
     car.position.set(-4, scaledSize.y / 2, 0);
     carHalfHeight = scaledSize.y / 2;
+    carHalfLength = scaledSize.x / 2;
 
     // Apply team color (orange) - single-mesh models recolor entirely for now
     car.traverse((child) => {
@@ -443,6 +607,8 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1); // clamp dt to avoid big jumps on tab-switch lag
   updateCarPhysics(dt);
+  updateBallPhysics(dt);
+  updateMatchTimer(dt);
   renderer.render(scene, camera);
 }
 animate();
