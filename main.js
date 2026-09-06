@@ -281,6 +281,7 @@ joystickBase.addEventListener('pointerdown', (e) => {
   joystickPointerId = e.pointerId;
   joystickBase.setPointerCapture(e.pointerId);
   updateJoystickFromPointer(e.clientX, e.clientY);
+  debugLog(`Joystick down at (${e.clientX.toFixed(0)}, ${e.clientY.toFixed(0)})`);
 
   // Double-tap detection - toggles continuous air roll while airborne
   const now = performance.now();
@@ -319,6 +320,7 @@ let boostHeld = false;
 
 jumpBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  debugLog(`Jump pressed. grounded=${carState.grounded}`);
   if (carState.grounded) {
     carState.vy = JUMP_VELOCITY;
     carState.grounded = false;
@@ -328,14 +330,16 @@ jumpBtn.addEventListener('pointerdown', (e) => {
 boostBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   boostHeld = true;
+  debugLog('Boost pressed');
 });
-boostBtn.addEventListener('pointerup', () => { boostHeld = false; });
+boostBtn.addEventListener('pointerup', () => { boostHeld = false; debugLog('Boost released'); });
 boostBtn.addEventListener('pointercancel', () => { boostHeld = false; });
 boostBtn.addEventListener('pointerleave', () => { boostHeld = false; });
 
 rotateBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   carState.facingFlipped = !carState.facingFlipped;
+  debugLog(`Rotate pressed. facingFlipped=${carState.facingFlipped}`);
 });
 
 function updateBoostMeterUI() {
