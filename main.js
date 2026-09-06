@@ -52,8 +52,8 @@ const ballState = {
   vy: 0,
 };
 const BALL_GRAVITY = 14;       // a bit lighter than the car's gravity, floatier feel
-const BALL_RESTITUTION = 0.72; // bounce energy retained (0 = no bounce, 1 = perfect bounce)
-const HIT_IMPULSE = 9;         // extra "pop" applied when the car hits the ball
+const BALL_RESTITUTION = 0.45; // bounce energy retained (0 = no bounce, 1 = perfect bounce) - reduced, was too bouncy
+const MIN_HIT_PUSH = 1.2;      // small minimum push so the ball doesn't stick inside a stationary car
 
 const WALL_X_LEFT = -ARENA_LENGTH / 2;
 const WALL_X_RIGHT = ARENA_LENGTH / 2;
@@ -113,6 +113,9 @@ function endMatch(winner) {
     matchBannerEl.textContent = `${winner.toUpperCase()} WINS!`;
     matchBannerEl.style.color = winner === 'blue' ? '#3b82f6' : '#f97316';
   }
+  // Freeze input - hide joystick and buttons entirely so nothing can move
+  document.getElementById('joystick-base').style.display = 'none';
+  document.getElementById('button-cluster').style.display = 'none';
 }
 
 function updateMatchTimer(dt) {
@@ -154,9 +157,12 @@ function updateBallPhysics(dt) {
   // Left end wall / goal
   if (ballState.x - BALL_RADIUS <= WALL_X_LEFT) {
     const inGoalOpening = ballState.y > GOAL_BOTTOM && ballState.y < GOAL_TOP;
-    if (inGoalOpening && ballState.x - BALL_RADIUS <= WALL_X_LEFT - 0.3) {
-      // Ball has passed fully through the opening - orange scores on blue's goal
-      awardGoal('orange');
+    if (inGoalOpening) {
+      // Within the goal's height - let it pass through, no bounce.
+      // Once the whole ball has cleared the wall line, it's a goal.
+      if (ballState.x + BALL_RADIUS <= WALL_X_LEFT) {
+        awardGoal('orange');
+      }
     } else {
       ballState.x = WALL_X_LEFT + BALL_RADIUS;
       ballState.vx = -ballState.vx * BALL_RESTITUTION;
@@ -166,9 +172,10 @@ function updateBallPhysics(dt) {
   // Right end wall / goal
   if (ballState.x + BALL_RADIUS >= WALL_X_RIGHT) {
     const inGoalOpening = ballState.y > GOAL_BOTTOM && ballState.y < GOAL_TOP;
-    if (inGoalOpening && ballState.x + BALL_RADIUS >= WALL_X_RIGHT + 0.3) {
-      // Ball has passed fully through the opening - blue scores on orange's goal
-      awardGoal('blue');
+    if (inGoalOpening) {
+      if (ballState.x - BALL_RADIUS >= WALL_X_RIGHT) {
+        awardGoal('blue');
+      }
     } else {
       ballState.x = WALL_X_RIGHT - BALL_RADIUS;
       ballState.vx = -ballState.vx * BALL_RESTITUTION;
@@ -196,9 +203,13 @@ function updateBallPhysics(dt) {
       ballState.x += nx * overlap;
       ballState.y += ny * overlap;
 
-      // Transfer car velocity into the ball, plus a pop for a satisfying hit
-      ballState.vx = carState.vx + nx * HIT_IMPULSE;
-      ballState.vy = Math.max(carState.vy, 0) + ny * HIT_IMPULSE;
+      // Transfer the car's actual velocity into the ball. The "pop" added on
+      // top scales with how fast the car is moving - a stationary or slow
+      // car should barely nudge the ball, not launch it from nothing.
+      const carSpeed = Math.sqrt(carState.vx * carState.vx + Math.max(carState.vy, 0) ** 2);
+      const pushStrength = MIN_HIT_PUSH + carSpeed * 0.5;
+      ballState.vx = carState.vx + nx * pushStrength;
+      ballState.vy = Math.max(carState.vy, 0) + ny * pushStrength;
     }
   }
 
@@ -515,7 +526,7 @@ function updateBoostMeterUI() {
 
 // ---------- PHYSICS UPDATE ----------
 function updateCarPhysics(dt) {
-  if (!car) return;
+  if (!car || matchState.gameOver) return;
 
   const isBoosting = boostHeld && carState.boost > 0;
 
