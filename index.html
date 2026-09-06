@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Sideswipe</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     html, body {
       margin: 0;
@@ -12,11 +13,76 @@
       background: #0a0a0a;
       width: 100%;
       height: 100%;
+      font-family: sans-serif;
+      color: white;
     }
     #scene-canvas {
       display: block;
       width: 100vw;
       height: 100vh;
+    }
+
+    /* ---------- Pre-game screens ---------- */
+    .screen {
+      position: fixed;
+      inset: 0;
+      background: #111318;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 200;
+      padding: 20px;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    .screen h1 { font-size: 32px; margin-bottom: 8px; }
+    .screen h2 { font-size: 22px; margin-bottom: 4px; }
+    .screen input {
+      font-size: 18px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: none;
+      width: 240px;
+      text-align: center;
+    }
+    .screen button {
+      font-size: 16px;
+      font-weight: bold;
+      padding: 12px 24px;
+      border-radius: 10px;
+      border: none;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      min-width: 220px;
+    }
+    .screen button.secondary { background: #374151; }
+    .screen button.danger { background: #b91c1c; }
+    #party-members-list {
+      display: flex;
+      gap: 20px;
+      margin: 10px 0;
+    }
+    .party-member-card {
+      background: #1f2937;
+      border-radius: 10px;
+      padding: 14px 20px;
+      min-width: 100px;
+    }
+    #qr-code-container img {
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+    }
+    .room-code-display {
+      font-size: 22px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      background: #1f2937;
+      padding: 8px 16px;
+      border-radius: 8px;
     }
     #debug-panel {
       position: fixed;
@@ -179,38 +245,87 @@
   </style>
 </head>
 <body>
-  <div id="scoreboard">
-    <span id="score-blue">0</span>
-    <span id="match-timer">2:00</span>
-    <span id="score-orange">0</span>
-  </div>
-  <div id="match-banner"></div>
-
-  <div id="stats-panel">
-    <div>Goals: <span id="stat-goals">0</span></div>
-    <div>Assists: <span id="stat-assists">0</span></div>
-    <div>Shots: <span id="stat-shots">0</span></div>
-    <div>Saves: <span id="stat-saves">0</span></div>
-  </div>
-  <div id="ball-arrow"></div>
-
-  <canvas id="scene-canvas"></canvas></canvas></canvas>
-  <div id="debug-panel">Loading...</div>
-
-  <div id="joystick-base">
-    <div id="joystick-knob"></div>
+  <!-- ---------- Username entry ---------- -->
+  <div id="username-screen" class="screen">
+    <h1>Sideswipe</h1>
+    <input id="username-input" placeholder="Enter username" maxlength="16" />
+    <button id="username-continue-btn">Continue</button>
   </div>
 
-  <div id="button-cluster">
-    <div id="jump-btn" class="action-btn">JUMP</div>
-    <div class="bottom-row">
-      <div id="boost-btn" class="action-btn">
-        <div id="boost-fill"></div>
-        <span style="position: relative; z-index: 1;">BOOST</span>
+  <!-- ---------- Home screen ---------- -->
+  <div id="home-screen" class="screen" style="display:none;">
+    <h2>Welcome, <span id="home-username-display"></span></h2>
+    <button id="host-game-btn">Host Game (1v1)</button>
+    <button id="join-game-btn" class="secondary">Join Game</button>
+    <button id="create-party-btn" class="secondary">Create Party</button>
+    <button id="join-party-btn" class="secondary">Join Party</button>
+    <button id="show-qr-btn" class="secondary">My QR Code</button>
+  </div>
+
+  <!-- ---------- Enter a code (used for both Join Game and Join Party) ---------- -->
+  <div id="join-code-screen" class="screen" style="display:none;">
+    <h2 id="join-code-title">Enter Room Code</h2>
+    <input id="join-code-input" placeholder="e.g. sideswipe-ab12c" />
+    <button id="join-code-submit-btn">Join</button>
+    <button id="join-code-back-btn" class="secondary">Back</button>
+  </div>
+
+  <!-- ---------- QR code display ---------- -->
+  <div id="qr-screen" class="screen" style="display:none;">
+    <h2>Scan to Join</h2>
+    <div id="qr-code-container"></div>
+    <div class="room-code-display" id="qr-code-text"></div>
+    <button id="qr-back-btn" class="secondary">Back</button>
+  </div>
+
+  <!-- ---------- Party waiting room ---------- -->
+  <div id="party-screen" class="screen" style="display:none;">
+    <h2>Party</h2>
+    <div class="room-code-display" id="party-code-display"></div>
+    <div id="party-members-list"></div>
+    <p id="party-status-text"></p>
+    <input id="challenge-code-input" placeholder="Opponent party code" style="display:none;" />
+    <button id="party-challenge-btn" class="secondary" style="display:none;">Challenge Party</button>
+    <button id="party-leave-btn" class="danger">Leave Party</button>
+  </div>
+
+  <!-- ---------- Game screen (existing HUD + canvas, hidden until a match starts) ---------- -->
+  <div id="game-screen" style="display:none;">
+    <div id="scoreboard">
+      <span id="score-blue">0</span>
+      <span id="match-timer">2:00</span>
+      <span id="score-orange">0</span>
+    </div>
+    <div id="match-banner"></div>
+
+    <div id="stats-panel">
+      <div>Goals: <span id="stat-goals">0</span></div>
+      <div>Assists: <span id="stat-assists">0</span></div>
+      <div>Shots: <span id="stat-shots">0</span></div>
+      <div>Saves: <span id="stat-saves">0</span></div>
+    </div>
+    <div id="ball-arrow"></div>
+
+    <canvas id="scene-canvas"></canvas>
+    <div id="debug-panel">Loading...</div>
+
+    <div id="joystick-base">
+      <div id="joystick-knob"></div>
+    </div>
+
+    <div id="button-cluster">
+      <div id="jump-btn" class="action-btn">JUMP</div>
+      <div class="bottom-row">
+        <div id="boost-btn" class="action-btn">
+          <div id="boost-fill"></div>
+          <span style="position: relative; z-index: 1;">BOOST</span>
+        </div>
+        <div id="rotate-btn" class="action-btn">↺</div>
       </div>
-      <div id="rotate-btn" class="action-btn">↺</div>
     </div>
   </div>
+
+  <div id="lobby-debug" style="position:fixed; bottom:10px; left:10px; color:#4ade80; font-family:monospace; font-size:12px; background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:6px; z-index:300; max-width:90vw; white-space:pre-wrap;"></div>
 
   <script type="importmap">
   {
@@ -236,8 +351,8 @@
     // Dynamic import wrapped in a catch - a top-level `import` statement
     // fails silently with no error surfaced if the module (or a CDN it
     // depends on) can't load, so we do it this way instead.
-    import('./main.js').catch((err) => {
-      panel.textContent = 'FAILED TO LOAD main.js: ' + (err.message || err);
+    import('./lobby.js').catch((err) => {
+      panel.textContent = 'FAILED TO LOAD lobby.js: ' + (err.message || err);
     });
   </script>
 </body>
