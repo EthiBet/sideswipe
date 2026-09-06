@@ -41,6 +41,7 @@ const carState = {
   isRolling: false,     // continuous air roll toggled by double-tapping the joystick
 };
 let carHalfHeight = 0.3; // updated once the real model size is known
+let lastMoveDir = 1; // tracks actual travel direction (not the cosmetic facing flip) for boost
 
 // ---------- DEBUG PANEL (no DevTools available, so we print to the page) ----------
 const debugPanel = document.getElementById('debug-panel');
@@ -353,14 +354,20 @@ function updateCarPhysics(dt) {
   if (!car) return;
 
   const isBoosting = boostHeld && carState.boost > 0;
-  const facingDir = carState.facingFlipped ? -1 : 1;
+
+  // Boost direction follows where you're actually trying to go (the joystick),
+  // not the cosmetic turnaround facing - those are independent by design.
+  if (Math.abs(joystickX) > 0.05) {
+    lastMoveDir = Math.sign(joystickX);
+  }
+  const boostDir = lastMoveDir;
 
   if (carState.grounded) {
     // Ground movement: direct horizontal control from the joystick, plus a
     // real flat speed bonus while boosting (added here, not as a tiny
     // per-frame acceleration, since ground velocity is fully recomputed
     // every frame from the joystick and would otherwise erase it)
-    const boostBonus = isBoosting ? facingDir * BOOST_GROUND_SPEED_BONUS : 0;
+    const boostBonus = isBoosting ? boostDir * BOOST_GROUND_SPEED_BONUS : 0;
     carState.vx = joystickX * MOVE_SPEED + boostBonus;
   } else {
     // Airborne: joystick gives light steering drift, not full control
@@ -375,7 +382,7 @@ function updateCarPhysics(dt) {
     // In the air, boost still works as a genuine acceleration since
     // air velocity persists frame-to-frame instead of being reset
     if (isBoosting) {
-      carState.vx += facingDir * BOOST_ACCEL * dt;
+      carState.vx += boostDir * BOOST_ACCEL * dt;
     }
   }
 
