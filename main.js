@@ -791,6 +791,12 @@ function animate() {
 
   if (car) {
     usernameSprite.position.set(car.position.x, car.position.y + carHalfHeight + 0.6, 0);
+
+    // Camera follows the car's horizontal position, keeping a fixed
+    // height/distance offset - smoothed so it doesn't snap around
+    const targetX = car.position.x;
+    camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetX, dt * 3);
+    camera.lookAt(camera.position.x, 2, 0);
   }
   updateBallArrow();
 
