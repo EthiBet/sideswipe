@@ -38,6 +38,14 @@
   <canvas id="scene-canvas"></canvas>
   <div id="debug-panel">Loading...</div>
 
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
   <script>
     // Catch anything that goes wrong anywhere on the page, since DevTools
     // isn't available to read errors from the console.
