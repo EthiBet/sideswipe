@@ -34,6 +34,7 @@ let partyRosterFromServer = []; // usernames, kept in sync for display on client
 let isPartyLeader = false;
 let pendingChallengeConn = null; // temporary connection while challenging another party
 let matchRosterLocked = false; // true once a challenge is accepted and we're the final host
+let finalRoster = [];
 
 function generateRoomCode() {
   return 'sideswipe-' + Math.random().toString(36).substring(2, 7);
@@ -104,6 +105,10 @@ document.getElementById('host-game-btn').addEventListener('click', () => {
   peer.on('error', (err) => lobbyLog('PEER ERROR: ' + err.type));
 
   peer.on('connection', (conn) => {
+    if (conn.metadata?.isPartyChallenge) {
+      handleIncomingConnection(conn);
+      return;
+    }
     if (hostConnections.length >= roomCapacity - 1) {
       conn.on('open', () => conn.close());
       return;
@@ -113,7 +118,12 @@ document.getElementById('host-game-btn').addEventListener('click', () => {
       hostConnections.push(conn);
       if (hostConnections.length === roomCapacity - 1) {
         lobbyLog('Room full - starting match');
-        hostConnections.forEach((c) => c.send({ type: 'matchStart' }));
+        const roster = [
+          { id: peer.id, username: localUsername, team: 'blue' },
+          { id: conn.peer, username: conn.metadata?.username || 'Player', team: 'orange' },
+        ];
+        hostConnections.forEach((c) => c.send({ type: 'matchStart', roster }));
+        window.gameNetwork = { isHost: true, myId: peer.id, myUsername: localUsername, peerConnections: hostConnections, roster };
         startGame();
       }
     });
@@ -157,8 +167,10 @@ document.getElementById('create-party-btn').addEventListener('click', () => {
       if (matchRosterLocked) {
         // We've already accepted a challenge and know the final roster size -
         // this is a redirected member joining the finished match, not a
-        // regular pre-challenge party join.
+        // regular pre-challenge party join. They're always the challenger's
+        // side, since our own party was already locked into finalRoster above.
         hostConnections.push(conn);
+        finalRoster.push({ id: conn.peer, username: memberName, team: 'orange' });
         checkIfMatchFull();
         return;
       }
@@ -233,6 +245,7 @@ document.getElementById('join-code-submit-btn').addEventListener('click', () => 
     conn.on('data', (data) => {
       if (data.type === 'matchStart') {
         lobbyLog('Match starting!');
+        window.gameNetwork = { isHost: false, myId: peer.id, myUsername: localUsername, peerConnections: [conn], roster: data.roster };
         startGame();
       } else if (data.type === 'partyRoster') {
         renderPartyMembers(data.usernames);
@@ -241,11 +254,12 @@ document.getElementById('join-code-submit-btn').addEventListener('click', () => 
         lobbyLog(`Redirecting to match host: ${data.hostId}`);
         conn.close();
         const newConn = peer.connect(data.hostId, { metadata: { username: localUsername } });
-        newConn.on('open', () => {
-          clientConnection = newConn;
-        });
+        newConn.on('open', () => { clientConnection = newConn; });
         newConn.on('data', (d2) => {
-          if (d2.type === 'matchStart') startGame();
+          if (d2.type === 'matchStart') {
+            window.gameNetwork = { isHost: false, myId: peer.id, myUsername: localUsername, peerConnections: [newConn], roster: d2.roster };
+            startGame();
+          }
         });
       }
     });
@@ -290,7 +304,10 @@ document.getElementById('party-challenge-btn').addEventListener('click', () => {
 
       const finalConn = peer.connect(data.hostId, { metadata: { username: localUsername } });
       finalConn.on('data', (d2) => {
-        if (d2.type === 'matchStart') startGame();
+        if (d2.type === 'matchStart') {
+          window.gameNetwork = { isHost: false, myId: peer.id, myUsername: localUsername, peerConnections: [finalConn], roster: d2.roster };
+          startGame();
+        }
       });
     } else if (data.type === 'challengeRejected') {
       lobbyLog('Challenge rejected - opponent party may be full or unavailable');
@@ -313,6 +330,11 @@ function handleIncomingConnection(conn) {
       // Total capacity = our party + their party.
       roomCapacity = (partyMembers.length + 1) + conn.metadata.partySize;
       matchRosterLocked = true;
+      finalRoster = [
+        { id: peer.id, username: localUsername, team: 'blue' },
+        ...partyMembers.map((m) => ({ id: m.conn.peer, username: m.username, team: 'blue' })),
+        { id: conn.peer, username: conn.metadata.username, team: 'orange' },
+      ];
       conn.send({ type: 'challengeAccepted', hostId: currentRoomCode });
       hostConnections = [...partyMembers.map((m) => m.conn), conn];
       checkIfMatchFull();
@@ -326,7 +348,8 @@ function checkIfMatchFull() {
   lobbyLog(`Match roster: ${connectedSoFar}/${roomCapacity}`);
   if (connectedSoFar >= roomCapacity) {
     lobbyLog('Full match assembled - starting');
-    hostConnections.forEach((c) => c.send({ type: 'matchStart' }));
+    hostConnections.forEach((c) => c.send({ type: 'matchStart', roster: finalRoster }));
+    window.gameNetwork = { isHost: true, myId: peer.id, myUsername: localUsername, peerConnections: hostConnections, roster: finalRoster };
     startGame();
   }
 }
