@@ -337,14 +337,22 @@
   </script>
   <script>
     // Catch anything that goes wrong anywhere on the page, since DevTools
-    // isn't available to read errors from the console.
-    const panel = document.getElementById('debug-panel');
+    // isn't available to read errors from the console. Writes to BOTH
+    // possible panels since only one is visible at a time (lobby-debug
+    // before a match starts, debug-panel after) - this guarantees whichever
+    // one is currently showing actually displays the error.
+    function reportPageError(msg) {
+      const lobbyPanel = document.getElementById('lobby-debug');
+      const gamePanel = document.getElementById('debug-panel');
+      if (lobbyPanel) lobbyPanel.textContent += (lobbyPanel.textContent ? '\n' : '') + msg;
+      if (gamePanel) gamePanel.textContent = msg;
+    }
     window.addEventListener('error', (e) => {
-      panel.textContent = 'PAGE ERROR: ' + (e.message || e) +
-        (e.filename ? '\nFile: ' + e.filename + ':' + e.lineno : '');
+      reportPageError('PAGE ERROR: ' + (e.message || e) +
+        (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
     });
     window.addEventListener('unhandledrejection', (e) => {
-      panel.textContent = 'PROMISE ERROR: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+      reportPageError('PROMISE ERROR: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
     });
   </script>
   <script type="module">
@@ -352,7 +360,7 @@
     // fails silently with no error surfaced if the module (or a CDN it
     // depends on) can't load, so we do it this way instead.
     import('./lobby.js').catch((err) => {
-      panel.textContent = 'FAILED TO LOAD lobby.js: ' + (err.message || err);
+      reportPageError('FAILED TO LOAD lobby.js: ' + (err.message || err));
     });
   </script>
 </body>
