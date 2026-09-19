@@ -515,6 +515,17 @@ if (IS_HOST) {
       matchState.scoreBlue = data.scoreBlue; matchState.scoreOrange = data.scoreOrange;
       matchState.timeRemaining = data.timeRemaining; matchState.overtime = data.overtime;
       matchState.gameOver = data.gameOver; matchState.controlsFrozen = data.controlsFrozen;
+
+      // A client's own local car is deliberately excluded from the normal
+      // per-tick position overwrite above (so local movement stays
+      // responsive), which means it never actually snaps back to spawn on
+      // its own when a goal/overtime kickoff happens - only detect the
+      // moment the freeze begins and force it back here.
+      if (matchState.controlsFrozen && !wasControlsFrozen) {
+        resetLocalPlayerToSpawn();
+      }
+      wasControlsFrozen = matchState.controlsFrozen;
+
       scoreBlueEl.textContent = matchState.scoreBlue;
       scoreOrangeEl.textContent = matchState.scoreOrange;
       matchTimerEl.textContent = matchState.overtime ? 'OVERTIME' : formatTime(matchState.timeRemaining);
@@ -668,6 +679,19 @@ function updateBoostMeterUI(boostValue) {
 const clock = new THREE.Clock();
 let networkTickAccumulator = 0;
 const NETWORK_TICK_RATE = 0.05; // ~20 times/sec
+let wasControlsFrozen = false; // used on clients to detect a fresh kickoff and reset locally
+
+function resetLocalPlayerToSpawn() {
+  const local = players[LOCAL_ID];
+  if (!local) return;
+  const idx = ROSTER.findIndex((r) => r.id === LOCAL_ID);
+  const spawnX = spawnXForIndex(idx, local.team);
+  const s = local.state;
+  s.x = spawnX; s.y = 0; s.vx = 0; s.vy = 0;
+  s.grounded = true; s.facingFlipped = false; s.isRolling = false;
+  local.mesh.position.set(s.x, carHalfHeight, 0);
+  local.mesh.rotation.set(0, 0, 0);
+}
 
 function animate() {
   requestAnimationFrame(animate);
