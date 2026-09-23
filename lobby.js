@@ -298,17 +298,17 @@ document.getElementById('party-challenge-btn').addEventListener('click', () => {
   pendingChallengeConn.on('data', (data) => {
     if (data.type === 'challengeAccepted') {
       // The opponent leader (data.hostId) becomes the final match host.
-      // Tell our own party members to redirect there, then redirect ourselves too.
+      // Tell our own party members to redirect there.
       lobbyLog(`Challenge accepted - final host: ${data.hostId}`);
       partyMembers.forEach((m) => m.conn.send({ type: 'redirect', hostId: data.hostId }));
-
-      const finalConn = peer.connect(data.hostId, { metadata: { username: localUsername } });
-      finalConn.on('data', (d2) => {
-        if (d2.type === 'matchStart') {
-          window.gameNetwork = { isHost: false, myId: peer.id, myUsername: localUsername, peerConnections: [finalConn], roster: d2.roster };
-          startGame();
-        }
-      });
+      // Important: do NOT open a second connection here. pendingChallengeConn
+      // is already an open, accepted connection to the final host - opening
+      // a separate one left the host broadcasting to one connection while
+      // we listened on a different one, so we'd never receive game state.
+      // Just keep using this same connection for the match itself.
+    } else if (data.type === 'matchStart') {
+      window.gameNetwork = { isHost: false, myId: peer.id, myUsername: localUsername, peerConnections: [pendingChallengeConn], roster: data.roster };
+      startGame();
     } else if (data.type === 'challengeRejected') {
       lobbyLog('Challenge rejected - opponent party may be full or unavailable');
     }
